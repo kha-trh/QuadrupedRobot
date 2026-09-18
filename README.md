@@ -19,6 +19,43 @@ The model uses four legs with two joints per leg:
 
 The shared dimensions are returned by `Code/robot_data.m`. Forward kinematics is implemented by the four `FK_*` functions, and inverse kinematics by the four matching `IK_*` functions.
 
+## Algorithms
+
+### Forward kinematics
+
+Each leg is modeled as a planar two-link chain with a mirrored body offset. Given joint angles `theta1` and `theta2` in degrees, the endpoint is calculated from:
+
+```text
+x = body_offset_x + l1 cos(theta1) + l2 cos(theta1 + theta2)
+z = -l1 sin(theta1) - l2 sin(theta1 + theta2)
+```
+
+The four FK functions apply the appropriate signs for the upper/lower and left/right leg positions. `TransMatrix.m` and `countingFK.m` provide the homogeneous-transform and symbolic derivation used to inspect these equations.
+
+### Inverse kinematics
+
+The matching IK functions convert a requested foot position `(x, y, z)` into two joint angles:
+
+1. Transform the target into the selected leg's local plane.
+2. Solve the two-link triangle using the law of cosines.
+3. Select the configured knee branch with `atan2d`.
+4. Convert the result back to the leg's degree-based joint convention.
+
+The target must be reachable by the two links. A future improvement should reject unreachable targets before the square-root step and report the requested leg and position.
+
+### Trajectory generation
+
+- `TrajectoryPlanning.m` solves independent cubic polynomials for `x` and `y`, using position and velocity boundary conditions at the start and end of a segment.
+- `TrajectoryPlanning2.m` solves independent quintic polynomials, using position, velocity, and acceleration boundary conditions. The current calls use zero end velocity and acceleration for smooth squat and return motions.
+- `Cycloid.m` generates a single swing using a cycloidal phase, producing a horizontal transfer and vertical lift.
+- `Cycloid2.m` uses a cycloidal first half for the swing and a quintic interpolation for the second half to return the foot to its starting `x` position.
+
+### Gait sequencing
+
+`walk.m` uses an alternating diagonal gait. The first phase moves the right-up and left-down legs while the other pair supports the body; the second phase moves the left-up and right-down legs. Each sampled foot position is passed through IK, converted to normalized servo values, and written to the Arduino.
+
+`squat.m` applies quintic vertical transitions to all legs and repeats the motion in timed cycles. Plotting and workspace scripts use FK directly to inspect reachable foot regions before hardware motion is attempted.
+
 ## Requirements
 
 For simulation and plotting:
@@ -97,21 +134,17 @@ The code does not clamp these values or enforce servo limits. Confirm the mappin
 - `homePoss.m`: computes and writes a pose for all eight servos.
 - `testServo.m`: direct two-servo smoke test.
 
-`Delay.m` is a busy loop rather than a calibrated time delay. Timing should not be assumed to be in milliseconds.
+`Delay.m` is a busy loop rather than a calibrated time delay. Use measured timing or MATLAB `pause` when repeatable motion timing is required.
 
-## Known limitations
+## Current constraints
 
-These issues are present in the current source and should be considered before changing behavior:
+Keep these constraints in mind when running or extending the project:
 
-- `walk.m` and `squat.m` use mismatched IK functions in their second diagonal phase; verify intended leg names before correcting them.
-- `testServoCycloid.m` references `land` without defining it.
-- `homePoss.m` has incorrect diagnostic assignments for some down-leg FK pose variables, although those values are not used for the final writes.
-- IK functions do not check reachability before taking a square root, so unreachable targets can produce complex values.
-- The IK expressions contain operator-precedence-sensitive divisions such as `... / l2*(i+1)`; preserve or verify behavior carefully when refactoring.
-- `constant.m` returns a very small ratio used to suppress lateral terms. It is obscure and should not be changed without rechecking the coordinate model.
-- `TrajectoryPlanning.m` and `TrajectoryPlanning2.m` use explicit matrix inversion.
-- `compact.m` is an incomplete symbolic scratch file and is not an execution entry point.
-- No MATLAB or hardware test suite is included. Static inspection alone does not establish safe robot motion.
+- The gait scripts contain mismatched IK calls in their second diagonal phase and should be checked before hardware use.
+- IK has no reachability or joint-limit guard, so invalid targets can produce complex or unsafe servo commands.
+- Hardware settings are hard-coded in scripts (`Mega2560`, `COM5`, and pins `D2`-`D9`), and servo values are not clamped.
+- `testServoCycloid.m` is experimental and references an undefined `land` variable.
+- There is no automated MATLAB or hardware test suite. Validate FK/IK round trips, trajectory endpoints, normalized servo ranges, and wiring before motion.
 
 ## References
 
